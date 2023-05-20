@@ -1,0 +1,200 @@
+Parsing and producing JSON
+Groovy comes with integrated support for converting between Groovy objects and JSON. The classes dedicated to JSON serialisation and parsing are found in the groovy.json package.
+
+1. JsonSlurper
+JsonSlurper is a class that parses JSON text or reader content into Groovy data structures (objects) such as maps, lists and primitive types like Integer, Double, Boolean and String.
+
+The class comes with a bunch of overloaded parse methods plus some special methods such as parseText, parseFile and others. For the next example we will use the parseText method. It parses a JSON String and recursively converts it to a list or map of objects. The other parse* methods are similar in that they return a JSON String but for different parameter types.
+
+def jsonSlurper = new JsonSlurper()
+def object = jsonSlurper.parseText('{ "name": "John Doe" } /* some comment */')
+
+assert object instanceof Map
+assert object.name == 'John Doe'
+Notice the result is a plain map and can be handled like a normal Groovy object instance. JsonSlurper parses the given JSON as defined by the ECMA-404 JSON Interchange Standard plus support for JavaScript comments and dates.
+
+In addition to maps JsonSlurper supports JSON arrays which are converted to lists.
+
+def jsonSlurper = new JsonSlurper()
+def object = jsonSlurper.parseText('{ "myList": [4, 8, 15, 16, 23, 42] }')
+
+assert object instanceof Map
+assert object.myList instanceof List
+assert object.myList == [4, 8, 15, 16, 23, 42]
+The JSON standard supports the following primitive data types: string, number, object, true, false and null. JsonSlurper converts these JSON types into corresponding Groovy types.
+
+def jsonSlurper = new JsonSlurper()
+def object = jsonSlurper.parseText '''
+    { "simple": 123,
+      "fraction": 123.66,
+      "exponential": 123e12
+    }'''
+
+assert object instanceof Map
+assert object.simple.class == Integer
+assert object.fraction.class == BigDecimal
+assert object.exponential.class == BigDecimal
+As JsonSlurper is returning pure Groovy object instances without any special JSON classes in the back, its usage is transparent. In fact, JsonSlurper results conform to GPath expressions. GPath is a powerful expression language that is supported by multiple slurpers for different data formats (XmlSlurper for XML being one example).
+
+For more details please have a look at the section on GPath expressions.
+The following table gives an overview of the JSON types and the corresponding Groovy data types:
+
+JSON	Groovy
+string
+
+java.lang.String
+
+number
+
+java.lang.BigDecimal or java.lang.Integer
+
+object
+
+java.util.LinkedHashMap
+
+array
+
+java.util.ArrayList
+
+true
+
+true
+
+false
+
+false
+
+null
+
+null
+
+date
+
+java.util.Date based on the yyyy-MM-dd’T’HH:mm:ssZ date format
+
+Whenever a value in JSON is null, JsonSlurper supplements it with the Groovy null value. This is in contrast to other JSON parsers that represent a null value with a library-provided singleton object.
+1.1. Parser Variants
+JsonSlurper comes with a couple of parser implementations. Each parser fits different requirements, it could well be that for certain scenarios the JsonSlurper default parser is not the best bet for all situations. Here is an overview of the shipped parser implementations:
+
+The JsonParserCharArray parser basically takes a JSON string and operates on the underlying character array. During value conversion it copies character sub-arrays (a mechanism known as "chopping") and operates on them.
+
+The JsonFastParser is a special variant of the JsonParserCharArray and is the fastest parser. However, it is not the default parser for a reason. JsonFastParser is a so-called index-overlay parser. During parsing of the given JSON String it tries as hard as possible to avoid creating new char arrays or String instances. It keeps pointers to the underlying original character array only. In addition, it defers object creation as late as possible. If parsed maps are put into long-term caches care must be taken as the map objects might not be created and still consist of pointer to the original char buffer only. However, JsonFastParser comes with a special chop mode which dices up the char buffer early to keep a small copy of the original buffer. Recommendation is to use the JsonFastParser for JSON buffers under 2MB and keeping the long-term cache restriction in mind.
+
+The JsonParserLax is a special variant of the JsonParserCharArray parser. It has similar performance characteristics as JsonFastParser but differs in that it isn’t exclusively relying on the ECMA-404 JSON grammar. For example it allows for comments, no quote strings etc.
+
+The JsonParserUsingCharacterSource is a special parser for very large files. It uses a technique called "character windowing" to parse large JSON files (large means files over 2MB size in this case) with constant performance characteristics.
+
+The default parser implementation for JsonSlurper is JsonParserCharArray. The JsonParserType enumeration contains constants for the parser implementations described above:
+
+Implementation	Constant
+JsonParserCharArray
+
+JsonParserType#CHAR_BUFFER
+
+JsonFastParser
+
+JsonParserType#INDEX_OVERLAY
+
+JsonParserLax
+
+JsonParserType#LAX
+
+JsonParserUsingCharacterSource
+
+JsonParserType#CHARACTER_SOURCE
+
+Changing the parser implementation is as easy as setting the JsonParserType with a call to JsonSlurper#setType().
+
+def jsonSlurper = new JsonSlurper(type: JsonParserType.INDEX_OVERLAY)
+def object = jsonSlurper.parseText('{ "myList": [4, 8, 15, 16, 23, 42] }')
+
+assert object instanceof Map
+assert object.myList instanceof List
+assert object.myList == [4, 8, 15, 16, 23, 42]
+2. JsonOutput
+JsonOutput is responsible for serialising Groovy objects into JSON strings. It can be seen as companion object to JsonSlurper, being a JSON parser.
+
+JsonOutput comes with overloaded, static toJson methods. Each toJson implementation takes a different parameter type. The static methods can either be used directly or by importing the methods with a static import statement.
+
+The result of a toJson call is a String containing the JSON code.
+
+def json = JsonOutput.toJson([name: 'John Doe', age: 42])
+
+assert json == '{"name":"John Doe","age":42}'
+JsonOutput does not only support primitive, maps or list data types to be serialized to JSON, it goes further and even has support for serialising POGOs, that is, plain-old Groovy objects.
+
+class Person { String name }
+
+def json = JsonOutput.toJson([ new Person(name: 'John'), new Person(name: 'Max') ])
+
+assert json == '[{"name":"John"},{"name":"Max"}]'
+2.1. Customizing Output
+If you need control over the serialized output you can use a JsonGenerator. The JsonGenerator.Options builder can be used to create a customized generator. One or more options can be set on this builder in order to alter the resulting output. When you are done setting the options simply call the build() method in order to get a fully configured instance that will generate output based on the options selected.
+
+class Person {
+    String name
+    String title
+    int age
+    String password
+    Date dob
+    URL favoriteUrl
+}
+
+Person person = new Person(name: 'John', title: null, age: 21, password: 'secret',
+                            dob: Date.parse('yyyy-MM-dd', '1984-12-15'),
+                            favoriteUrl: new URL('http://groovy-lang.org/'))
+
+def generator = new JsonGenerator.Options()
+    .excludeNulls()
+    .dateFormat('yyyy@MM')
+    .excludeFieldsByName('age', 'password')
+    .excludeFieldsByType(URL)
+    .build()
+
+assert generator.toJson(person) == '{"name":"John","dob":"1984@12"}'
+A closure can be used to transform a type. These closure converters are registered for a given type and will be called any time that type or a subtype is encountered. The first parameter to the closure is an object matching the type for which the converter is registered and this parameter is required. The closure may take an optional second String parameter and this will be set to the key name if one is available.
+
+class Person {
+    String name
+    URL favoriteUrl
+}
+
+Person person = new Person(name: 'John', favoriteUrl: new URL('http://groovy-lang.org/json.html#_jsonoutput'))
+
+def generator = new JsonGenerator.Options()
+    .addConverter(URL) { URL u, String key ->
+        if (key == 'favoriteUrl') {
+            u.getHost()
+        } else {
+            u
+        }
+    }
+    .build()
+
+assert generator.toJson(person) == '{"name":"John","favoriteUrl":"groovy-lang.org"}'
+
+// No key available when generating a JSON Array
+def list = [new URL('http://groovy-lang.org/json.html#_jsonoutput')]
+assert generator.toJson(list) == '["http://groovy-lang.org/json.html#_jsonoutput"]'
+
+// First parameter to the converter must match the type for which it is registered
+shouldFail(IllegalArgumentException) {
+    new JsonGenerator.Options()
+        .addConverter(Date) { Calendar cal -> }
+}
+2.1.1. Formatted Output
+As we saw in previous examples, the JSON output is not pretty printed per default. However, the prettyPrint method in JsonOutput comes to rescue for this task.
+
+def json = JsonOutput.toJson([name: 'John Doe', age: 42])
+
+assert json == '{"name":"John Doe","age":42}'
+
+assert JsonOutput.prettyPrint(json) == '''\
+{
+    "name": "John Doe",
+    "age": 42
+}'''.stripIndent()
+prettyPrint takes a String as single parameter; therefore, it can be applied on arbitrary JSON String instances, not only the result of JsonOutput.toJson.
+
+2.2. Builders
+Another way to create JSON from Groovy is to use JsonBuilder or StreamingJsonBuilder. Both builders provide a DSL which allows to formulate an object graph which is then converted to JSON.
